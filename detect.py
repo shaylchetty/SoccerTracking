@@ -28,12 +28,19 @@ Usage - formats:
                                  yolov5s_paddle_model       # PaddlePaddle
 """
 
+from utils.torch_utils import select_device, smart_inference_mode
+from utils.general import (LOGGER, Profile, check_file, check_img_size, check_imshow, check_requirements, colorstr, cv2,
+                           increment_path, non_max_suppression, print_args, scale_boxes, strip_optimizer, xyxy2xywh)
+from utils.dataloaders import IMG_FORMATS, VID_FORMATS, LoadImages, LoadScreenshots, LoadStreams
+from models.common import DetectMultiBackend
+from ultralytics.utils.plotting import Annotator, colors, save_one_box
 import argparse
 import csv
 import os
 import platform
 import sys
 from pathlib import Path
+import helper
 
 import torch
 
@@ -42,14 +49,6 @@ ROOT = FILE.parents[0]  # YOLOv5 root directory
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
-
-from ultralytics.utils.plotting import Annotator, colors, save_one_box
-
-from models.common import DetectMultiBackend
-from utils.dataloaders import IMG_FORMATS, VID_FORMATS, LoadImages, LoadScreenshots, LoadStreams
-from utils.general import (LOGGER, Profile, check_file, check_img_size, check_imshow, check_requirements, colorstr, cv2,
-                           increment_path, non_max_suppression, print_args, scale_boxes, strip_optimizer, xyxy2xywh)
-from utils.torch_utils import select_device, smart_inference_mode
 
 
 @smart_inference_mode()
@@ -83,6 +82,9 @@ def run(
         dnn=False,  # use OpenCV DNN for ONNX inference
         vid_stride=1,  # video frame-rate stride
 ):
+
+    object_count = 0  # Initialize the object count
+
     source = str(source)
     save_img = not nosave and not source.endswith('.txt')  # save inference images
     is_file = Path(source).suffix[1:] in (IMG_FORMATS + VID_FORMATS)
@@ -169,6 +171,8 @@ def run(
                 # Rescale boxes from img_size to im0 size
                 det[:, :4] = scale_boxes(im.shape[2:], det[:, :4], im0.shape).round()
 
+                bounding_boxes = []  # store Box position each player
+
                 # Print results
                 for c in det[:, 5].unique():
                     n = (det[:, 5] == c).sum()  # detections per class
@@ -177,7 +181,7 @@ def run(
                 # Write results
                 for *xyxy, conf, cls in reversed(det):
                     c = int(cls)  # integer class
-                    label = names[c] if hide_conf else f'{names[c]}'
+                    label = names[c] if hide_conf else f'{names[c]} {conf:.2f}'
                     confidence = float(conf)
                     confidence_str = f'{confidence:.2f}'
 
@@ -194,8 +198,26 @@ def run(
                         c = int(cls)  # integer class
                         label = None if hide_labels else (names[c] if hide_conf else f'{names[c]} {conf:.2f}')
                         annotator.box_label(xyxy, label, color=colors(c, True))
-                    if save_crop:
-                        save_one_box(xyxy, imc, file=save_dir / 'crops' / names[c] / f'{p.stem}.jpg', BGR=True)
+
+                    # Draw markers (rectangles) around detected objects
+                    x1, y1, x2, y2 = map(int, xyxy)
+                    # cv2.rectangle(im0, (x1, y1), (x2, y2), (0, 255, 0), line_thickness)
+
+                    # Print positions of each box
+                    bounding_boxes.append([x1, y1, x2, y2])
+                    cv2.rectangle(im0, (x1, y1), (x2, y2), (0, 255, 0), line_thickness)
+
+                    # Increment object count for each valid detection
+                    object_count += 1
+
+                filtered_boxes = helper.shayl_non_max_suppression(bounding_boxes, threshold=0.5)
+
+                # The filtered_boxes list now contains the non-overlapping bounding boxes
+                for count, item in enumerate(filtered_boxes):
+                    print(count, item)
+
+                print(f"New number of objects detected in {p.name}: {count+ 1}")
+                print(f"Number of objects detected in {p.name}: {object_count}")
 
             # Stream results
             im0 = annotator.result()
